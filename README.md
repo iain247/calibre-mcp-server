@@ -26,7 +26,7 @@ Add this service to your existing `docker-compose.yml`:
 
 ```yaml
   calibre-mcp:
-    build: ./calibre-mcp
+    image: iain247/calibre-mcp-server:latest
     container_name: calibre-mcp
     restart: unless-stopped
     ports:
