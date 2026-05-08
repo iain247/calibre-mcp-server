@@ -3,12 +3,15 @@ VERSION := $(shell git describe --tags --abbrev=0 2>/dev/null || echo "latest")
 
 .PHONY: build push release tag dev
 
-build:
+builder:
+	docker buildx create --name multiarch --use || docker buildx use multiarch
+
+build: builder
 	docker buildx build --platform linux/amd64,linux/arm64 -t $(IMAGE):$(VERSION) -t $(IMAGE):latest --push .
 
 release: build
 
-dev:
+dev: builder
 	docker buildx build --platform linux/amd64,linux/arm64 -t $(IMAGE):develop --push .
 
 tag:
