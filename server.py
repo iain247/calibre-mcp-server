@@ -18,7 +18,6 @@ from starlette.applications import Starlette
 from starlette.routing import Mount, Route
 
 CALIBRE_LIBRARY = os.environ.get("CALIBRE_LIBRARY", "/library")
-CALIBRE_URL = os.environ.get("CALIBRE_URL", "http://localhost:8181").rstrip("/")
 TIMEOUT = 30
 
 server = Server("calibre-mcp")
@@ -148,8 +147,6 @@ def book_to_text(book: dict) -> str:
     fmts = format_formats(book.get("formats"))
     if fmts:
         lines.append(f"Formats: {', '.join(fmts)}")
-        if "EPUB" in fmts:
-            lines.append(f"Download EPUB: {CALIBRE_URL}/get/EPUB/{book['id']}")
     if book.get("comments"):
         desc = re.sub(r"<[^>]+>", "", book["comments"]).strip()
         if desc:

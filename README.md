@@ -18,7 +18,6 @@ To find it: in the Calibre desktop app, hover over the library name in the top-r
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CALIBRE_LIBRARY` | `/library` | Where the library is mounted inside the container. Change this if you mount to a different path. |
-| `CALIBRE_URL` | `http://localhost:8181` | Base URL of your Calibre content server. Used to generate EPUB download links in search results. |
 
 ## Running with Docker Compose
 
@@ -33,7 +32,6 @@ Add this service to your existing `docker-compose.yml`:
       - 3000:3000
     environment:
       - CALIBRE_LIBRARY=/library
-      - CALIBRE_URL=http://your-calibre-host:8181
     volumes:
       - /path/to/your/calibre/library:/library
 ```
@@ -47,7 +45,6 @@ docker build -t calibre-mcp-server .
 docker run -d \
   -p 3000:3000 \
   -v /path/to/your/calibre/library:/library \
-  -e CALIBRE_URL=http://your-calibre-host:8181 \
   calibre-mcp-server
 ```
 

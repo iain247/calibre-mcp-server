@@ -12,7 +12,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY server.py .
 
 ENV CALIBRE_LIBRARY=/library
-ENV CALIBRE_URL=http://localhost:8181
 ENV QT_QPA_PLATFORM=offscreen
 
 EXPOSE 3000
