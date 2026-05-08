@@ -161,6 +161,14 @@ def book_to_text(book: dict) -> str:
 async def list_tools() -> list[types.Tool]:
     return [
         types.Tool(
+            name="list_all",
+            description="List every book in the Calibre library with title, authors, series and formats. Use this when the user wants to see their full library.",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+            },
+        ),
+        types.Tool(
             name="search",
             description=(
                 "Search the Calibre library by metadata. "
@@ -271,7 +279,9 @@ async def list_tools() -> list[types.Tool]:
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
     try:
-        if name == "search":
+        if name == "list_all":
+            return await handle_list_all()
+        elif name == "search":
             return await handle_search(arguments)
         elif name == "fts":
             return await handle_fts(arguments)
@@ -287,6 +297,23 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
         return [types.TextContent(type="text", text="Error: calibredb timed out after 30 seconds")]
     except RuntimeError as e:
         return [types.TextContent(type="text", text=f"Error: {e}")]
+
+
+async def handle_list_all() -> list[types.TextContent]:
+    output = await run_calibredb(
+        "list",
+        "--fields", "id,title,authors,series,series_index,formats",
+        "--for-machine",
+    )
+    books = json.loads(output or "[]")
+    if not books:
+        return [types.TextContent(type="text", text="No books found in library.")]
+
+    lines = [f"{len(books)} book(s) in library:\n"]
+    for book in books:
+        lines.append(book_to_text(book))
+        lines.append("")
+    return [types.TextContent(type="text", text="\n".join(lines).strip())]
 
 
 async def handle_search(args: dict) -> list[types.TextContent]:

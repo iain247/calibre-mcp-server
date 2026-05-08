@@ -73,6 +73,7 @@ You should see `calibre: http://your-host:3000/sse - ✓ Connected`.
 
 | Tool | Description |
 |------|-------------|
+| `list_all` | List every book in the library with title, authors, series and formats. |
 | `search` | Search by title, author, series, tags. Supports Calibre field syntax (`title:"..."`, `authors:"..."`, etc.) or plain keywords. |
 | `fts` | Full-text search across all book content. Requires the FTS index to be built in Calibre (Preferences → Search → Full text search). |
 | `book` | Full metadata for a specific book by ID. |
