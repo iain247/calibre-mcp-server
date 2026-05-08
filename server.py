@@ -5,6 +5,9 @@ import json
 import os
 import re
 import subprocess
+import xml.etree.ElementTree as ET
+import zipfile
+from html.parser import HTMLParser
 from typing import Any
 
 import uvicorn
@@ -47,6 +50,81 @@ def format_formats(formats: list[str] | None) -> list[str]:
     if not formats:
         return []
     return [os.path.splitext(f)[1].lstrip(".").upper() for f in formats]
+
+
+class _HTMLTextExtractor(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self._text = []
+        self._skip = False
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ('script', 'style'):
+            self._skip = True
+        elif tag in ('p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'br', 'tr'):
+            self._text.append('\n')
+
+    def handle_endtag(self, tag):
+        if tag in ('script', 'style'):
+            self._skip = False
+
+    def handle_data(self, data):
+        if not self._skip:
+            self._text.append(data)
+
+    def get_text(self):
+        return ''.join(self._text)
+
+
+def _parse_ncx(z: zipfile.ZipFile, ncx_name: str) -> list[dict]:
+    ns = {'ncx': 'http://www.daisy.org/z3986/2005/ncx/'}
+    root = ET.fromstring(z.read(ncx_name))
+    base = ncx_name.rsplit('/', 1)[0] + '/' if '/' in ncx_name else ''
+    names = z.namelist()
+    chapters = []
+    for point in root.findall('.//ncx:navPoint', ns):
+        label = point.find('.//ncx:text', ns)
+        content = point.find('ncx:content', ns)
+        if label is None or content is None:
+            continue
+        src = content.get('src', '').split('#')[0]
+        path = (base + src) if not src.startswith('/') else src.lstrip('/')
+        file_path = path if path in names else src
+        if file_path in names:
+            chapters.append({'title': label.text or f"Chapter {len(chapters) + 1}", 'file': file_path})
+    return chapters
+
+
+def _parse_spine(z: zipfile.ZipFile) -> list[dict]:
+    names = z.namelist()
+    opf_name = next((n for n in names if n.endswith('.opf')), None)
+    if not opf_name:
+        return []
+    ns = {'opf': 'http://www.idpf.org/2007/opf'}
+    root = ET.fromstring(z.read(opf_name))
+    base = opf_name.rsplit('/', 1)[0] + '/' if '/' in opf_name else ''
+    manifest = {item.get('id'): base + item.get('href', '') for item in root.findall('.//opf:item', ns)}
+    chapters = []
+    for itemref in root.findall('.//opf:itemref', ns):
+        path = manifest.get(itemref.get('idref', ''))
+        if path and path in names:
+            chapters.append({'title': f"Section {len(chapters) + 1}", 'file': path})
+    return chapters
+
+
+def get_epub_chapters(epub_path: str) -> list[dict]:
+    with zipfile.ZipFile(epub_path) as z:
+        ncx = next((n for n in z.namelist() if n.endswith('.ncx')), None)
+        return _parse_ncx(z, ncx) if ncx else _parse_spine(z)
+
+
+def extract_chapter_text(epub_path: str, chapter_file: str) -> str:
+    with zipfile.ZipFile(epub_path) as z:
+        html = z.read(chapter_file).decode('utf-8', errors='replace')
+    extractor = _HTMLTextExtractor()
+    extractor.feed(html)
+    text = extractor.get_text()
+    return re.sub(r'\n{3,}', '\n\n', text).strip()
 
 
 def book_to_text(book: dict) -> str:
@@ -138,6 +216,55 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["id"],
             },
         ),
+        types.Tool(
+            name="search_book",
+            description=(
+                "Search for specific passages within a single book. "
+                "Useful for finding what a character said or did, locating a scene, "
+                "or answering questions about specific events without reading the whole book."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "description": "Calibre book ID",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Word or phrase to search for",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of matching passages to return (default: 10)",
+                        "default": 10,
+                    },
+                },
+                "required": ["id", "query"],
+            },
+        ),
+        types.Tool(
+            name="read",
+            description=(
+                "Read the text of a specific chapter from a book in your Calibre library. "
+                "If no chapter number is given, returns the list of available chapters. "
+                "Use the book ID from search results."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "description": "Calibre book ID",
+                    },
+                    "chapter": {
+                        "type": "integer",
+                        "description": "Chapter number (1-indexed). Omit to list available chapters.",
+                    },
+                },
+                "required": ["id"],
+            },
+        ),
     ]
 
 
@@ -150,6 +277,10 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
             return await handle_fts(arguments)
         elif name == "book":
             return await handle_book(arguments)
+        elif name == "read":
+            return await handle_read(arguments)
+        elif name == "search_book":
+            return await handle_search_book(arguments)
         else:
             return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
     except subprocess.TimeoutExpired:
@@ -225,6 +356,103 @@ async def handle_book(args: dict) -> list[types.TextContent]:
         return [types.TextContent(type="text", text=f"No book found with ID: {book_id}")]
 
     return [types.TextContent(type="text", text=book_to_text(books[0]))]
+
+
+async def handle_search_book(args: dict) -> list[types.TextContent]:
+    book_id = int(args["id"])
+    query = args["query"]
+    max_results = int(args.get("max_results", 10))
+
+    output = await run_calibredb(
+        "list",
+        "--fields", "id,title,formats",
+        "--for-machine",
+        "--search", f"id:{book_id}",
+    )
+    books = json.loads(output or "[]")
+    if not books:
+        return [types.TextContent(type="text", text=f"No book found with ID: {book_id}")]
+
+    epub_path = next((f for f in books[0].get("formats", []) if f.lower().endswith(".epub")), None)
+    if not epub_path:
+        return [types.TextContent(type="text", text=f"No EPUB available for book {book_id}")]
+
+    def search_epub():
+        chapters = get_epub_chapters(epub_path)
+        pattern = re.compile(re.escape(query), re.IGNORECASE)
+        matches = []
+        for i, ch in enumerate(chapters, 1):
+            try:
+                text = extract_chapter_text(epub_path, ch["file"])
+            except Exception:
+                continue
+            for m in pattern.finditer(text):
+                start = max(0, m.start() - 200)
+                end = min(len(text), m.end() + 200)
+                snippet = text[start:end].strip()
+                matches.append((i, ch["title"], snippet))
+                if len(matches) >= max_results:
+                    return matches
+        return matches
+
+    try:
+        matches = await asyncio.to_thread(search_epub)
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"Error searching EPUB: {e}")]
+
+    if not matches:
+        return [types.TextContent(type="text", text=f"No matches for '{query}' in book {book_id}.")]
+
+    title = books[0].get("title", f"Book {book_id}")
+    lines = [f"{len(matches)} match(es) for '{query}' in {title}:\n"]
+    for chapter_num, chapter_title, snippet in matches:
+        lines.append(f"Chapter {chapter_num} — {chapter_title}:")
+        lines.append(f"  ...{snippet}...")
+        lines.append("")
+    return [types.TextContent(type="text", text="\n".join(lines).strip())]
+
+
+async def handle_read(args: dict) -> list[types.TextContent]:
+    book_id = int(args["id"])
+    chapter = args.get("chapter")
+
+    output = await run_calibredb(
+        "list",
+        "--fields", "id,formats",
+        "--for-machine",
+        "--search", f"id:{book_id}",
+    )
+    books = json.loads(output or "[]")
+    if not books:
+        return [types.TextContent(type="text", text=f"No book found with ID: {book_id}")]
+
+    formats = books[0].get("formats", [])
+    epub_path = next((f for f in formats if f.lower().endswith(".epub")), None)
+    if not epub_path:
+        return [types.TextContent(type="text", text=f"No EPUB available for book {book_id}")]
+
+    try:
+        chapters = await asyncio.to_thread(get_epub_chapters, epub_path)
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"Error reading EPUB: {e}")]
+
+    if chapter is None:
+        lines = [f"{len(chapters)} chapter(s) available:\n"]
+        for i, ch in enumerate(chapters, 1):
+            lines.append(f"{i}. {ch['title']}")
+        return [types.TextContent(type="text", text="\n".join(lines))]
+
+    chapter_num = int(chapter)
+    if chapter_num < 1 or chapter_num > len(chapters):
+        return [types.TextContent(type="text", text=f"Chapter {chapter_num} not found — book has {len(chapters)} chapters.")]
+
+    ch = chapters[chapter_num - 1]
+    try:
+        text = await asyncio.to_thread(extract_chapter_text, epub_path, ch["file"])
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"Error extracting chapter: {e}")]
+
+    return [types.TextContent(type="text", text=f"Chapter {chapter_num}: {ch['title']}\n\n{text}")]
 
 
 sse = SseServerTransport("/messages")
