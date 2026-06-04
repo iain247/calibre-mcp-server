@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import asyncio
+from contextlib import asynccontextmanager
 import json
 import os
 import re
@@ -14,6 +15,7 @@ import uvicorn
 from mcp import types
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
 from starlette.routing import Mount, Route
 
@@ -480,6 +482,11 @@ async def handle_read(args: dict) -> list[types.TextContent]:
 
 
 sse = SseServerTransport("/messages")
+streamable_http = StreamableHTTPSessionManager(
+    app=server,
+    json_response=True,
+    stateless=True,
+)
 
 
 async def handle_sse(request):
@@ -487,11 +494,19 @@ async def handle_sse(request):
         await server.run(streams[0], streams[1], server.create_initialization_options())
 
 
+@asynccontextmanager
+async def lifespan(app):
+    async with streamable_http.run():
+        yield
+
+
 app = Starlette(
     routes=[
         Route("/sse", endpoint=handle_sse),
         Mount("/messages", app=sse.handle_post_message),
-    ]
+        Mount("/mcp", app=streamable_http.handle_request),
+    ],
+    lifespan=lifespan,
 )
 
 if __name__ == "__main__":

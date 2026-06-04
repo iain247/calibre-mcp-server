@@ -2,7 +2,7 @@
 
 ## What this is
 
-A Python MCP server that bridges Claude Code to a Calibre ebook library. It runs as an SSE server over HTTP and shells out to `calibredb` for library queries and EPUB access.
+A Python MCP server that bridges MCP clients to a Calibre ebook library. It exposes legacy SSE at `/sse` for Claude Code and streamable HTTP at `/mcp` for Codex/newer MCP clients, then shells out to `calibredb` for library queries and EPUB access.
 
 ## Key files
 
@@ -17,7 +17,7 @@ pip install -r requirements.txt
 CALIBRE_LIBRARY=/path/to/library python server.py
 ```
 
-The server starts on `http://0.0.0.0:3000`. Tools are available at `/sse`.
+The server starts on `http://0.0.0.0:3000`. Tools are available through SSE at `/sse` and streamable HTTP at `/mcp`.
 
 ## Adding a tool
 

@@ -1,6 +1,6 @@
 # calibre-mcp-server
 
-A remote MCP server that exposes a Calibre ebook library to Claude Code. Runs as a Docker container alongside Calibre and connects via HTTP/SSE.
+A remote MCP server that exposes a Calibre ebook library to MCP clients. Runs as a Docker container alongside Calibre and supports both legacy HTTP/SSE and streamable HTTP transports.
 
 ## Requirements
 
@@ -48,9 +48,34 @@ docker run -d \
   calibre-mcp-server
 ```
 
-## Connecting to Claude Code
+## Connecting to clients
 
-Once the container is running, register it as a remote MCP server:
+The server exposes two MCP transports:
+
+| Client type | URL | Notes |
+|-------------|-----|-------|
+| Streamable HTTP | `http://your-host:3000/mcp` | Recommended for Codex and newer MCP clients. |
+| SSE | `http://your-host:3000/sse` | Kept for Claude Code configurations that use `--transport sse`. |
+
+### Codex
+
+Once the container is running, register it as a streamable HTTP MCP server:
+
+```bash
+codex mcp add calibre --url http://your-host:3000/mcp
+```
+
+Replace `your-host` with the IP or hostname of the machine running the container.
+
+Verify it connected:
+
+```bash
+codex mcp list
+```
+
+### Claude Code
+
+Claude Code can continue to use the SSE endpoint:
 
 ```bash
 claude mcp add --transport sse --scope user calibre http://your-host:3000/sse
